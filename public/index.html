@@ -1061,8 +1061,19 @@ function openAdminLogin() {
 async function doLogin() {
   const email = document.getElementById('loginEmail').value.trim();
   const pass  = document.getElementById('loginPass').value;
-  document.getElementById('loginErr').textContent = 'Signing in...';
+  const loginErr = document.getElementById('loginErr');
+  const loginDebug = document.getElementById('loginDebug');
+  
+  // Validate inputs
+  if (!email || !pass) {
+    loginErr.textContent = 'Please enter email and password';
+    return;
+  }
+  
+  loginErr.textContent = 'Signing in...';
+  loginDebug.textContent = '';
   console.log('[doLogin] Sending login request for:', email);
+  
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -1077,25 +1088,39 @@ async function doLogin() {
     let parsed;
     try { parsed = JSON.parse(respText); } catch(e) { parsed = respText; }
     console.log('[doLogin] Response:', res.status, parsed);
-    document.getElementById('loginDebug').textContent = `Status: ${res.status} ${res.statusText}\nResponse: ${typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2)}`;
+    loginDebug.textContent = `Status: ${res.status} ${res.statusText}\nResponse: ${typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2)}`;
+    
     if (res.ok) {
       adminLoggedIn = true;
       console.log('[doLogin] Login success, opening admin panel');
-      document.getElementById('loginScreen').style.display = 'none';
-      await openAdmin();
-      console.log('[doLogin] Admin panel opened successfully');
+      loginErr.textContent = 'Loading admin panel...';
+      
+      try {
+        await openAdmin();
+        console.log('[doLogin] Admin panel opened successfully');
+        // Only hide login screen after admin panel is fully loaded and shown
+        document.getElementById('loginScreen').style.display = 'none';
+        // Clear inputs
+        document.getElementById('loginEmail').value = '';
+        document.getElementById('loginPass').value = '';
+        loginErr.textContent = '';
+      } catch(adminErr) {
+        console.error('[doLogin] Failed to open admin:', adminErr);
+        loginErr.textContent = 'Admin panel failed to load. Refresh page.';
+        adminLoggedIn = false;
+      }
     } else {
-      document.getElementById('loginErr').textContent = 'Invalid credentials. Try again.';
+      loginErr.textContent = `Login failed (${res.status}). Check credentials.`;
       console.log('[doLogin] Login failed:', parsed);
     }
   } catch (e) {
     console.error('[doLogin] Error:', e);
     if (e.name === 'AbortError') {
-      document.getElementById('loginErr').textContent = 'Request timeout. Server unreachable.';
-      document.getElementById('loginDebug').textContent = 'Request took more than 10 seconds';
+      loginErr.textContent = 'Request timeout. Server unreachable.';
+      loginDebug.textContent = 'Request took more than 10 seconds';
     } else {
-      document.getElementById('loginErr').textContent = 'Server unreachable.';
-      document.getElementById('loginDebug').textContent = String(e);
+      loginErr.textContent = 'Server unreachable. Check network.';
+      loginDebug.textContent = String(e);
     }
   }
 }
@@ -1108,13 +1133,14 @@ async function openAdmin() {
   try {
     console.log('[openAdmin] Starting admin panel load');
     await renderAdmin();
-    console.log('[openAdmin] renderAdmin completed, showing panel');
-    document.getElementById('adminPanel').classList.add('open');
-    console.log('[openAdmin] Admin panel class added');
+    console.log('[openAdmin] renderAdmin completed successfully');
+    const adminPanel = document.getElementById('adminPanel');
+    if (!adminPanel) throw new Error('adminPanel element not found');
+    adminPanel.classList.add('open');
+    console.log('[openAdmin] Admin panel class added and visible');
+    return true;
   } catch (e) {
     console.error('[openAdmin] Failed to open admin:', e);
-    document.getElementById('loginErr').textContent = 'Failed to load admin panel.';
-    document.getElementById('loginDebug').textContent = 'Error: ' + String(e);
     throw e;
   }
 }
@@ -1125,6 +1151,11 @@ function closeAdmin() {
 
 async function renderAdmin() {
   console.log('[renderAdmin] Starting to fetch recordings');
+  const localRecs = JSON.parse(localStorage.getItem('airdraw_recordings') || '[]');
+  console.log('[renderAdmin] Local storage has', localRecs.length, 'recordings');
+  
+  let serverRecs = [];
+  let fetchFailed = false;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -1132,20 +1163,40 @@ async function renderAdmin() {
     clearTimeout(timeout);
     console.log('[renderAdmin] Fetch response:', res.status);
     if (!res.ok) throw new Error(`Server response not OK: ${res.status}`);
-    const serverRecs = await res.json();
-    recordings = Array.isArray(serverRecs) ? serverRecs : [];
-    console.log('[renderAdmin] Loaded', recordings.length, 'recordings from server');
+    serverRecs = await res.json();
+    if (!Array.isArray(serverRecs)) serverRecs = [];
+    console.log('[renderAdmin] Server has', serverRecs.length, 'recordings');
   } catch (e) {
-    console.warn('[renderAdmin] Fetch failed, falling back to localStorage:', e);
-    const stored = localStorage.getItem('airdraw_recordings');
-    recordings = stored ? JSON.parse(stored) : [];
-    if (recordings.length) {
-      showToast('⚠ Showing local sessions while server is offline');
-      console.log('[renderAdmin] Loaded', recordings.length, 'recordings from localStorage');
-    } else {
-      showToast('⚠ Could not load recordings from server');
-      console.log('[renderAdmin] No recordings available');
+    console.warn('[renderAdmin] Fetch failed, will use local fallback:', e);
+    fetchFailed = true;
+  }
+
+  // Merge: server data takes precedence, but keep local ones not in server
+  const mergedMap = new Map();
+  
+  // Add server recordings first (they're authoritative)
+  serverRecs.forEach(rec => {
+    const key = rec.date + '_' + rec.size; // Simple key for dedup
+    mergedMap.set(key, rec);
+  });
+  
+  // Add local recordings that aren't in server (to preserve them)
+  localRecs.forEach(rec => {
+    const key = rec.date + '_' + rec.size;
+    if (!mergedMap.has(key)) {
+      mergedMap.set(key, rec);
     }
+  });
+  
+  // Convert back to array and sort by date (newest first)
+  recordings = Array.from(mergedMap.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+  
+  console.log('[renderAdmin] Merged total:', recordings.length, '(server:', serverRecs.length, '+ local-only:', localRecs.length - serverRecs.length + ')');
+  
+  if (fetchFailed && localRecs.length > 0) {
+    showToast('⚠ Showing local + server sessions (server unavailable)');
+  } else if (serverRecs.length === 0 && localRecs.length > 0) {
+    showToast('⚠ Old recordings not on server, showing local backup');
   }
 
   document.getElementById('stat-total').textContent = recordings.length;

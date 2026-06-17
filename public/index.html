@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AirDraw — Gesture Canvas</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --bg: #050508;
+    --surface: #0d0d14;
+    --surface2: #14141f;
+    --border: #1e1e2e;
+    --accent: #7c3aed;
+    --accent2: #06b6d4;
+    --text: #e2e8f0;
+    --text-dim: #64748b;
+    --neon-purple: #a855f7;
+    --neon-cyan: #22d3ee;
+    --neon-pink: #f472b6;
+    --danger: #ef4444;
+    --success: #10b981;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ── MAIN APP ── */
+  #app { display: flex; height: 100vh; width: 100vw; }
+
+  #canvas-area {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  #drawCanvas {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    cursor: none;
+  }
+
+  #webcamVideo {
+    position: absolute;
+    bottom: 16px; right: 16px;
+    width: 200px; height: 150px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    object-fit: cover;
+    transform: scaleX(-1);
+    z-index: 10;
+    opacity: 0.85;
+    box-shadow: 0 0 20px rgba(124,58,237,0.3);
+  }
+
+  #overlayCanvas {
+    position: absolute;
+    bottom: 16px; right: 16px;
+    width: 200px; height: 150px;
+    border-radius: 12px;
+    z-index: 11;
+    pointer-events: none;
+    transform: scaleX(-1);
+  }
+
+  /* ── SIDEBAR ── */
+  #sidebar {
+    width: 220px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 14px;
+    gap: 20px;
+    z-index: 20;
+    overflow-y: auto;
+  }
+
+  .logo {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--neon-purple), var(--neon-cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-align: center;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-label {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+
+  /* Color palette */
+  .color-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+  }
+
+  .color-swatch {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  }
+  .color-swatch:hover { transform: scale(1.15); }
+  .color-swatch.active {
+    border-color: #fff;
+    box-shadow: 0 0 10px currentColor;
+  }
+
+  .color-custom {
+    width: 100%;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    cursor: pointer;
+    margin-top: 6px;
+    padding: 2px;
+  }
+  input[type="color"] { width: 100%; height: 100%; border: none; cursor: pointer; background: none; }
+
+  /* Slider */
+  .slider-wrap { display: flex; flex-direction: column; gap: 6px; }
+  .slider-row { display: flex; justify-content: space-between; align-items: center; }
+  .slider-val { font-size: 12px; color: var(--neon-cyan); font-weight: 600; }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 4px;
+    background: var(--border);
+    border-radius: 4px;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--neon-purple);
+    cursor: pointer;
+    box-shadow: 0 0 8px var(--neon-purple);
+  }
+
+  /* Gesture legend */
+  .gesture-list { display: flex; flex-direction: column; gap: 8px; }
+  .gesture-item {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .gesture-icon {
+    font-size: 18px;
+    width: 28px; text-align: center;
+  }
+
+  /* Status indicator */
+  #status-badge {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+  #status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: background 0.3s;
+    flex-shrink: 0;
+  }
+  #status-dot.draw { background: var(--success); box-shadow: 0 0 8px var(--success); }
+  #status-dot.erase { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+  #status-dot.pause { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+  #status-dot.ready { background: var(--neon-cyan); box-shadow: 0 0 8px var(--neon-cyan); }
+
+  /* Buttons */
+  .btn {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.15s;
+    letter-spacing: 0.3px;
+  }
+  .btn:hover { background: var(--border); border-color: var(--neon-purple); }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn.danger:hover { background: rgba(239,68,68,0.1); }
+  .btn.admin-btn {
+    border-color: var(--accent);
+    color: var(--neon-purple);
+    margin-top: auto;
+  }
+  .btn.admin-btn:hover { background: rgba(124,58,237,0.15); }
+
+
+
+  /* ── LOGIN ── */
+  #loginScreen {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+    display: none;
+  }
+  .login-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 40px;
+    width: 360px;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  .login-logo { font-size: 22px; font-weight: 800; text-align: center; background: linear-gradient(135deg, var(--neon-purple), var(--neon-cyan)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .login-sub { font-size: 13px; color: var(--text-dim); text-align: center; margin-top: -12px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group label { font-size: 12px; color: var(--text-dim); }
+  .form-group input {
+    padding: 10px 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .form-group input:focus { border-color: var(--neon-purple); }
+  .login-btn {
+    padding: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none; border-radius: 10px;
+    color: #fff; font-weight: 700; font-size: 14px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .login-btn:hover { opacity: 0.9; }
+  .login-err { font-size: 12px; color: var(--danger); text-align: center; min-height: 18px; }
+
+  /* ── ADMIN PANEL ── */
+  #adminPanel {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    z-index: 900;
+    display: none;
+    flex-direction: column;
+  }
+
+  #adminPanel.open { display: flex; }
+
+  .admin-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .admin-title { font-size: 18px; font-weight: 700; }
+  .admin-badge {
+    font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+    background: rgba(124,58,237,0.2); color: var(--neon-purple);
+    border: 1px solid var(--accent);
+    border-radius: 20px; padding: 3px 10px;
+  }
+  .admin-close {
+    padding: 8px 16px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .admin-close:hover { border-color: var(--neon-purple); }
+
+  .admin-body { flex: 1; overflow-y: auto; padding: 28px; display: flex; flex-direction: column; gap: 24px; }
+
+  .admin-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .stat-num { font-size: 32px; font-weight: 800; background: linear-gradient(135deg, var(--neon-purple), var(--neon-cyan)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .stat-label { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+
+  .recordings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  .rec-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    transition: border-color 0.2s, transform 0.15s;
+  }
+  .rec-card:hover { border-color: var(--neon-purple); transform: translateY(-2px); }
+
+  .rec-thumb {
+    width: 100%; height: 160px;
+    object-fit: cover;
+    background: var(--surface2);
+    display: block;
+  }
+
+  .rec-info { padding: 14px; }
+  .rec-title { font-size: 13px; font-weight: 600; }
+  .rec-meta { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+  .rec-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+  .rec-btn {
+    flex: 1; padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    transition: all 0.15s;
+  }
+  .rec-btn:hover { border-color: var(--neon-cyan); color: var(--neon-cyan); }
+  .rec-btn.del:hover { border-color: var(--danger); color: var(--danger); }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-dim);
+  }
+  .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+  .empty-state p { font-size: 14px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 20px;
+    font-size: 13px; font-weight: 600;
+    z-index: 9999;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.3s, transform 0.3s;
+    transform: translateX(-50%) translateY(10px);
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="login-logo">✦ AirDraw Admin</div>
+    <div class="login-sub">Super Admin Panel</div>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="loginEmail" placeholder="Enter email" autocomplete="off">
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="loginPass" placeholder="••••••••" autocomplete="off">
+    </div>
+    <div class="login-err" id="loginErr"></div>
+    <button class="login-btn" onclick="doLogin()">Sign In</button>
+  </div>
+</div>
+
+<!-- ADMIN PANEL -->
+<div id="adminPanel">
+  <div class="admin-header">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="admin-title">✦ Super Admin Panel</div>
+      <div class="admin-badge">ADMIN</div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <span style="font-size:12px;color:var(--text-dim)">admin@demo.com</span>
+      <button class="admin-close" onclick="closeAdmin()">← Back to Canvas</button>
+    </div>
+  </div>
+  <div class="admin-body">
+    <div class="admin-stats">
+      <div class="stat-card">
+        <div class="stat-num" id="stat-total">0</div>
+        <div class="stat-label">Total Sessions</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="stat-size">0 MB</div>
+        <div class="stat-label">Storage Used</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="stat-latest">—</div>
+        <div class="stat-label">Last Saved</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label" style="margin-bottom:14px">Recorded Sessions</div>
+      <div class="recordings-grid" id="recordingsGrid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app">
+  <div id="canvas-area">
+    <canvas id="drawCanvas"></canvas>
+    <video id="webcamVideo" autoplay muted playsinline></video>
+    <canvas id="overlayCanvas"></canvas>
+  </div>
+
+  <div id="sidebar">
+    <div class="logo">✦ AirDraw</div>
+
+    <!-- Status -->
+    <div>
+      <div class="section-label">Status</div>
+      <div id="status-badge">
+        <div id="status-dot" class="ready"></div>
+        <span id="status-text">Ready — show hand</span>
+      </div>
+
+    </div>
+
+    <!-- Colors -->
+    <div>
+      <div class="section-label">Brush Color</div>
+      <div class="color-grid" id="colorGrid"></div>
+      <div class="color-custom">
+        <input type="color" id="customColor" value="#a855f7" title="Custom color">
+      </div>
+    </div>
+
+    <!-- Brush Size -->
+    <div>
+      <div class="section-label">Brush Size</div>
+      <div class="slider-wrap">
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--text-dim)">Thin → Thick</span>
+          <span class="slider-val" id="sizeVal">12</span>
+        </div>
+        <input type="range" id="brushSize" min="2" max="40" value="12">
+      </div>
+    </div>
+
+    <!-- Glow -->
+    <div>
+      <div class="section-label">Glow Intensity</div>
+      <div class="slider-wrap">
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--text-dim)">Soft → Blazing</span>
+          <span class="slider-val" id="glowVal">20</span>
+        </div>
+        <input type="range" id="glowSize" min="5" max="60" value="20">
+      </div>
+    </div>
+
+    <!-- Gestures -->
+    <div>
+      <div class="section-label">Gestures</div>
+      <div class="gesture-list">
+        <div class="gesture-item"><span class="gesture-icon">☝️</span> Index up = Draw</div>
+        <div class="gesture-item"><span class="gesture-icon">🤚</span> Open palm = Erase</div>
+        <div class="gesture-item"><span class="gesture-icon">✊</span> Closed fist = Pause</div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn danger" onclick="clearCanvas()">Clear Canvas</button>
+      <button class="btn" onclick="saveSnapshot()">Save Snapshot</button>
+    </div>
+
+    <button class="btn admin-btn" onclick="openAdminLogin()">⚙ Admin Panel</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── STATE ──────────────────────────────────────────────
+const COLORS = [
+  '#a855f7','#22d3ee','#f472b6','#fb923c','#4ade80',
+  '#facc15','#60a5fa','#f87171','#ffffff','#e2e8f0'
+];
+
+let currentColor = '#a855f7';
+let brushSize = 12;
+let glowSize = 20;
+let gestureMode = 'none'; // 'draw','erase','pause','none'
+let lastPoint = null;
+let isDrawing = false;
+let recordings = JSON.parse(localStorage.getItem('airdraw_recordings') || '[]');
+let autoSaveTimer = null;
+let sessionStartTime = Date.now();
+let hasDrawnSomething = false;
+let lastSaveTime = 0;
+
+// Canvas
+const drawCanvas = document.getElementById('drawCanvas');
+const ctx = drawCanvas.getContext('2d');
+const overlayCanvas = document.getElementById('overlayCanvas');
+const octx = overlayCanvas.getContext('2d');
+const video = document.getElementById('webcamVideo');
+
+function resizeCanvas() {
+  const area = document.getElementById('canvas-area');
+  drawCanvas.width = area.clientWidth;
+  drawCanvas.height = area.clientHeight;
+  overlayCanvas.width = 200;
+  overlayCanvas.height = 150;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// ── COLOR PALETTE ──────────────────────────────────────
+const colorGrid = document.getElementById('colorGrid');
+COLORS.forEach(c => {
+  const sw = document.createElement('div');
+  sw.className = 'color-swatch' + (c === currentColor ? ' active' : '');
+  sw.style.background = c;
+  sw.style.boxShadow = `0 0 6px ${c}`;
+  sw.onclick = () => selectColor(c, sw);
+  colorGrid.appendChild(sw);
+});
+
+document.getElementById('customColor').addEventListener('input', e => {
+  selectColor(e.target.value, null);
+  document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+});
+
+function selectColor(c, el) {
+  currentColor = c;
+  document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.getElementById('customColor').value = c;
+}
+
+// ── SLIDERS ────────────────────────────────────────────
+document.getElementById('brushSize').addEventListener('input', e => {
+  brushSize = +e.target.value;
+  document.getElementById('sizeVal').textContent = brushSize;
+});
+document.getElementById('glowSize').addEventListener('input', e => {
+  glowSize = +e.target.value;
+  document.getElementById('glowVal').textContent = glowSize;
+});
+
+// ── DRAWING ENGINE ─────────────────────────────────────
+function drawGlowDot(x, y) {
+  ctx.save();
+  ctx.shadowColor = currentColor;
+  ctx.shadowBlur = glowSize * 2;
+  ctx.fillStyle = currentColor;
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawGlowLine(x1, y1, x2, y2) {
+  ctx.save();
+  ctx.strokeStyle = currentColor;
+  ctx.lineWidth = brushSize;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = currentColor;
+  ctx.shadowBlur = glowSize;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  // extra glow layer
+  ctx.globalAlpha = 0.3;
+  ctx.lineWidth = brushSize * 2.5;
+  ctx.shadowBlur = glowSize * 3;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function eraseAt(x, y) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.beginPath();
+  ctx.arc(x, y, 40, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,1)';
+  ctx.fill();
+  ctx.restore();
+}
+
+function clearCanvas() {
+  ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+  showToast('Canvas cleared');
+  hasDrawnSomething = false;
+}
+
+// ── HAND TRACKING ──────────────────────────────────────
+function getFingerState(landmarks) {
+  // Index finger tip vs pip
+  const indexTip = landmarks[8];
+  const indexPip = landmarks[6];
+  const middleTip = landmarks[12];
+  const middlePip = landmarks[10];
+  const ringTip = landmarks[16];
+  const ringPip = landmarks[14];
+  const pinkyTip = landmarks[20];
+  const pinkyPip = landmarks[18];
+  const thumbTip = landmarks[4];
+  const thumbMcp = landmarks[2];
+
+  const indexUp = indexTip.y < indexPip.y;
+  const middleUp = middleTip.y < middlePip.y;
+  const ringUp = ringTip.y < ringPip.y;
+  const pinkyUp = pinkyTip.y < pinkyPip.y;
+  const thumbOpen = Math.abs(thumbTip.x - thumbMcp.x) > 0.05;
+
+  const upsCount = [indexUp, middleUp, ringUp, pinkyUp].filter(Boolean).length;
+
+  if (!indexUp && !middleUp && !ringUp && !pinkyUp) return 'fist';
+  if (upsCount >= 3 && thumbOpen) return 'open';
+  if (indexUp && !middleUp && !ringUp && !pinkyUp) return 'index';
+  return 'other';
+}
+
+const hands = new Hands({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+});
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.6,
+});
+
+hands.onResults(results => {
+  // Draw overlay on preview
+  octx.clearRect(0, 0, 200, 150);
+
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    setStatus('none', 'No hand detected');
+    lastPoint = null;
+    isDrawing = false;
+    return;
+  }
+
+  const landmarks = results.multiHandLandmarks[0];
+  const state = getFingerState(landmarks);
+
+  // Map finger tip to canvas
+  const tip = landmarks[8];
+  // Note: video is mirrored (scaleX(-1)), so we flip x
+  const cx = (1 - tip.x) * drawCanvas.width;
+  const cy = tip.y * drawCanvas.height;
+
+  // Draw finger dot on overlay (in preview, not mirrored since canvas is too)
+  const px = tip.x * 200;
+  const py = tip.y * 150;
+  octx.beginPath();
+  octx.arc(px, py, 6, 0, Math.PI * 2);
+  octx.fillStyle = state === 'index' ? currentColor : state === 'open' ? '#ef4444' : '#f59e0b';
+  octx.shadowColor = octx.fillStyle;
+  octx.shadowBlur = 12;
+  octx.fill();
+
+  if (state === 'fist') {
+    setStatus('pause', 'Paused ✊');
+    lastPoint = null;
+    isDrawing = false;
+    return;
+  }
+
+  if (state === 'open') {
+    setStatus('erase', 'Erasing 🤚');
+    eraseAt(cx, cy);
+    lastPoint = null;
+    return;
+  }
+
+  if (state === 'index') {
+    setStatus('draw', `Drawing ☝️`);
+    if (lastPoint) {
+      drawGlowLine(lastPoint.x, lastPoint.y, cx, cy);
+    } else {
+      drawGlowDot(cx, cy);
+    }
+    lastPoint = { x: cx, y: cy };
+    hasDrawnSomething = true;
+    scheduleAutoSave();
+    return;
+  }
+
+  // Other gestures
+  setStatus('ready', 'Hand detected');
+  lastPoint = null;
+});
+
+function setStatus(mode, text) {
+  const dot = document.getElementById('status-dot');
+  dot.className = `${mode}`;
+  document.getElementById('status-text').textContent = text;
+}
+
+// ── WEBCAM + CAMERA ────────────────────────────────────
+const camera = new Camera(video, {
+  onFrame: async () => { await hands.send({ image: video }); },
+  width: 640, height: 480,
+});
+camera.start().then(() => {
+  setStatus('ready', 'Camera on — show hand');
+  showToast('Camera ready! Show your hand to start drawing.');
+  startAutoRecord();
+}).catch(() => {
+  showToast('⚠ Camera access denied');
+});
+
+// ── AUTO RECORDING ─────────────────────────────────────
+let mediaRecorder = null;
+let recordedChunks = [];
+let isRecording = false;
+
+function startAutoRecord() {
+  try {
+    // Record the webcam video stream instead of the canvas
+    const stream = video.srcObject;
+    if (!stream) return;
+    const opts = { mimeType: 'video/webm;codecs=vp9' };
+    if (!MediaRecorder.isTypeSupported(opts.mimeType)) opts.mimeType = 'video/webm';
+    mediaRecorder = new MediaRecorder(stream, opts);
+    recordedChunks = [];
+
+    mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) recordedChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: 'video/webm' });
+      saveRecording(blob);
+      recordedChunks = [];
+      // restart for next session
+      setTimeout(startAutoRecord, 500);
+    };
+
+    mediaRecorder.start(1000);
+    isRecording = true;
+  } catch(e) {
+    console.warn('MediaRecorder not available:', e);
+  }
+}
+
+function scheduleAutoSave() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    if (hasDrawnSomething && isRecording && mediaRecorder?.state === 'recording') {
+      mediaRecorder.stop(); // triggers onstop → saves → restarts
+      hasDrawnSomething = false;
+    }
+  }, 30000); // auto-save every 30s of inactivity
+}
+
+function saveRecording(blob) {
+  const reader = new FileReader();
+  reader.onloadend = async () => {
+    // Capture thumbnail from webcam video
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = video.videoWidth || 200;
+    thumbCanvas.height = video.videoHeight || 150;
+    thumbCanvas.getContext('2d').drawImage(video, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    const thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.5);
+    const rec = {
+      date: new Date().toLocaleString(),
+      size: (blob.size / 1024 / 1024).toFixed(2),
+      data: reader.result,
+      thumbnail,
+      duration: Math.round((Date.now() - sessionStartTime) / 1000),
+    };
+    try {
+      const res = await fetch('/api/recordings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rec),
+      });
+      if (res.ok) {
+        sessionStartTime = Date.now();
+        showToast('✓ Session saved to MongoDB');
+      } else {
+        showToast('⚠ Save failed — check server');
+      }
+    } catch (e) {
+      showToast('⚠ Server unreachable');
+      console.error('Save error:', e);
+    }
+  };
+  reader.readAsDataURL(blob);
+}
+
+// Also save snapshot manually
+function saveSnapshot() {
+  const thumbnail = drawCanvas.toDataURL('image/png');
+  const a = document.createElement('a');
+  a.download = `airdraw-${Date.now()}.png`;
+  a.href = thumbnail;
+  a.click();
+  showToast('Snapshot downloaded!');
+}
+
+// ── ADMIN PANEL ────────────────────────────────────────
+let adminLoggedIn = false;
+
+function openAdminLogin() {
+  if (adminLoggedIn) { openAdmin(); return; }
+  document.getElementById('loginScreen').style.display = 'flex';
+}
+
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass  = document.getElementById('loginPass').value;
+  try {
+    const res  = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pass }),
+    });
+    if (res.ok) {
+      adminLoggedIn = true;
+      document.getElementById('loginScreen').style.display = 'none';
+      openAdmin();
+    } else {
+      document.getElementById('loginErr').textContent = 'Invalid credentials. Try again.';
+    }
+  } catch (e) {
+    document.getElementById('loginErr').textContent = 'Server unreachable.';
+  }
+}
+
+document.getElementById('loginPass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+async function openAdmin() {
+  await renderAdmin();
+  document.getElementById('adminPanel').classList.add('open');
+}
+
+function closeAdmin() {
+  document.getElementById('adminPanel').classList.remove('open');
+}
+
+async function renderAdmin() {
+  try {
+    const res = await fetch('/api/recordings');
+    recordings = await res.json();
+  } catch (e) {
+    recordings = [];
+    showToast('⚠ Could not load recordings from server');
+  }
+
+  document.getElementById('stat-total').textContent = recordings.length;
+  const totalMB = recordings.reduce((s, r) => s + parseFloat(r.size || 0), 0).toFixed(2);
+  document.getElementById('stat-size').textContent = totalMB + ' MB';
+  document.getElementById('stat-latest').textContent = recordings[0]?.date?.split(',')[0] || '—';
+
+  const grid = document.getElementById('recordingsGrid');
+  grid.innerHTML = '';
+
+  if (recordings.length === 0) {
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1">
+        <div class="icon">🎨</div>
+        <p>No sessions yet. Start drawing and sessions auto-save every 30 seconds.</p>
+      </div>`;
+    return;
+  }
+
+  recordings.forEach((rec, i) => {
+    const card = document.createElement('div');
+    card.className = 'rec-card';
+    card.innerHTML = `
+      <img class="rec-thumb" src="${rec.thumbnail || ''}" alt="Session thumbnail" onerror="this.style.background='#14141f'">
+      <div class="rec-info">
+        <div class="rec-title">Session #${recordings.length - i}</div>
+        <div class="rec-meta">${rec.date} · ${rec.size} MB · ${rec.duration}s</div>
+        <div class="rec-actions">
+          <button class="rec-btn" onclick="downloadRec(${i})">⬇ Download</button>
+          <button class="rec-btn" onclick="previewRec(${i})">▶ Preview</button>
+          <button class="rec-btn del" onclick="deleteRec(${i})">✕ Delete</button>
+        </div>
+      </div>`;
+    grid.appendChild(card);
+  });
+}
+
+function downloadRec(i) {
+  const rec = recordings[i];
+  const a = document.createElement('a');
+  a.download = `airdraw-session-${rec.id}.webm`;
+  a.href = rec.data;
+  a.click();
+}
+
+function previewRec(i) {
+  const rec = recordings[i];
+  const w = window.open('', '_blank');
+  w.document.write(`
+    <style>body{margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh}</style>
+    <video src="${rec.data}" controls autoplay style="max-width:100%;max-height:100vh"></video>
+  `);
+}
+
+async function deleteRec(i) {
+  if (!confirm('Delete this session?')) return;
+  const rec = recordings[i];
+  try {
+    await fetch(`/api/recordings/${rec._id}`, { method: 'DELETE' });
+  } catch (e) {
+    showToast('⚠ Delete failed');
+  }
+  renderAdmin();
+}
+
+// ── TOAST ──────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ── BACKGROUND PARTICLES (subtle) ──────────────────────
+(function bgParticles() {
+  const bg = document.createElement('canvas');
+  bg.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:0;opacity:0.18';
+  document.getElementById('canvas-area').prepend(bg);
+  const bgCtx = bg.getContext('2d');
+  const particles = Array.from({length: 60}, () => ({
+    x: Math.random() * window.innerWidth,
+    y: Math.random() * window.innerHeight,
+    r: Math.random() * 1.5 + 0.3,
+    vx: (Math.random() - 0.5) * 0.15,
+    vy: (Math.random() - 0.5) * 0.15,
+    c: COLORS[Math.floor(Math.random() * COLORS.length)]
+  }));
+
+  function animBg() {
+    bg.width = window.innerWidth;
+    bg.height = window.innerHeight;
+    bgCtx.clearRect(0, 0, bg.width, bg.height);
+    particles.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = bg.width;
+      if (p.x > bg.width) p.x = 0;
+      if (p.y < 0) p.y = bg.height;
+      if (p.y > bg.height) p.y = 0;
+      bgCtx.beginPath();
+      bgCtx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      bgCtx.fillStyle = p.c;
+      bgCtx.fill();
+    });
+    requestAnimationFrame(animBg);
+  }
+  animBg();
+})();
+
+// ── KEYBOARD SHORTCUTS ─────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key === 'c' || e.key === 'C') clearCanvas();
+  if (e.key === 's' || e.key === 'S') saveSnapshot();
+});
+
+// Auto-save when page is hidden or closed
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && hasDrawnSomething && mediaRecorder?.state === 'recording') {
+    mediaRecorder.stop();
+  }
+});
+
+window.addEventListener('beforeunload', () => {
+  if (hasDrawnSomething && mediaRecorder?.state === 'recording') {
+    mediaRecorder.stop();
+  }
+});
+</script>
+</body>
+</html>

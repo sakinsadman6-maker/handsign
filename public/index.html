@@ -584,6 +584,15 @@ let sessionStartTime = Date.now();
 let hasDrawnSomething = false;
 let lastSaveTime = 0;
 
+const API_BASE = (() => {
+  const origin = window.location.origin;
+  if (origin.includes('netlify.app')) return 'https://handsign-vimk.onrender.com';
+  // Use relative paths for Render and local development
+  return '';
+})();
+
+const api = path => `${API_BASE}${path}`;
+
 function persistLocalRecordings() {
   localStorage.setItem('airdraw_recordings', JSON.stringify(recordings.slice(0, 50)));
 }
@@ -912,7 +921,7 @@ function saveRecording(blob) {
     recordings.unshift(rec);
     persistLocalRecordings();
     try {
-      const res = await fetch('/api/recordings', {
+      const res = await fetch(api('/api/recordings'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(rec),
@@ -953,7 +962,7 @@ async function doLogin() {
   const email = document.getElementById('loginEmail').value.trim();
   const pass  = document.getElementById('loginPass').value;
   try {
-    const res  = await fetch('/api/auth/login', {
+    const res  = await fetch(api('/api/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password: pass }),
@@ -985,7 +994,7 @@ function closeAdmin() {
 
 async function renderAdmin() {
   try {
-    const res = await fetch('/api/recordings');
+    const res = await fetch(api('/api/recordings'));
     if (!res.ok) throw new Error('Server response not OK');
     const serverRecs = await res.json();
     recordings = Array.isArray(serverRecs) ? serverRecs : [];
@@ -1054,7 +1063,7 @@ async function deleteRec(i) {
   if (!confirm('Delete this session?')) return;
   const rec = recordings[i];
   try {
-    await fetch(`/api/recordings/${rec._id}`, { method: 'DELETE' });
+    await fetch(api(`/api/recordings/${rec._id}`), { method: 'DELETE' });
   } catch (e) {
     showToast('⚠ Delete failed');
   }

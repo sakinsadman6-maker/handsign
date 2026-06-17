@@ -591,14 +591,21 @@ function persistLocalRecordings() {
 // Canvas
 const drawCanvas = document.getElementById('drawCanvas');
 const ctx = drawCanvas.getContext('2d');
+const strokeCanvas = document.createElement('canvas');
+const strokeCtx = strokeCanvas.getContext('2d');
 const overlayCanvas = document.getElementById('overlayCanvas');
 const octx = overlayCanvas.getContext('2d');
 const video = document.getElementById('webcamVideo');
+video.style.display = 'none';
 
 function resizeCanvas() {
   const area = document.getElementById('canvas-area');
   drawCanvas.width = area.clientWidth;
   drawCanvas.height = area.clientHeight;
+  strokeCanvas.width = area.clientWidth;
+  strokeCanvas.height = area.clientHeight;
+  moveCanvas.width = area.clientWidth;
+  moveCanvas.height = area.clientHeight;
   overlayCanvas.width = 200;
   overlayCanvas.height = 150;
 }
@@ -640,48 +647,49 @@ document.getElementById('glowSize').addEventListener('input', e => {
 
 // ── DRAWING ENGINE ─────────────────────────────────────
 function drawGlowDot(x, y) {
-  ctx.save();
-  ctx.shadowColor = currentColor;
-  ctx.shadowBlur = glowSize * 2;
-  ctx.fillStyle = currentColor;
-  ctx.globalAlpha = 1;
-  ctx.beginPath();
-  ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+  strokeCtx.save();
+  strokeCtx.shadowColor = currentColor;
+  strokeCtx.shadowBlur = glowSize * 2;
+  strokeCtx.fillStyle = currentColor;
+  strokeCtx.globalAlpha = 1;
+  strokeCtx.beginPath();
+  strokeCtx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+  strokeCtx.fill();
+  strokeCtx.restore();
 }
 
 function drawGlowLine(x1, y1, x2, y2) {
-  ctx.save();
-  ctx.strokeStyle = currentColor;
-  ctx.lineWidth = brushSize;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.shadowColor = currentColor;
-  ctx.shadowBlur = glowSize;
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
+  strokeCtx.save();
+  strokeCtx.strokeStyle = currentColor;
+  strokeCtx.lineWidth = brushSize;
+  strokeCtx.lineCap = 'round';
+  strokeCtx.lineJoin = 'round';
+  strokeCtx.shadowColor = currentColor;
+  strokeCtx.shadowBlur = glowSize;
+  strokeCtx.beginPath();
+  strokeCtx.moveTo(x1, y1);
+  strokeCtx.lineTo(x2, y2);
+  strokeCtx.stroke();
   // extra glow layer
-  ctx.globalAlpha = 0.3;
-  ctx.lineWidth = brushSize * 2.5;
-  ctx.shadowBlur = glowSize * 3;
-  ctx.stroke();
-  ctx.restore();
+  strokeCtx.globalAlpha = 0.3;
+  strokeCtx.lineWidth = brushSize * 2.5;
+  strokeCtx.shadowBlur = glowSize * 3;
+  strokeCtx.stroke();
+  strokeCtx.restore();
 }
 
 function eraseAt(x, y) {
-  ctx.save();
-  ctx.globalCompositeOperation = 'destination-out';
-  ctx.beginPath();
-  ctx.arc(x, y, 40, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,1)';
-  ctx.fill();
-  ctx.restore();
+  strokeCtx.save();
+  strokeCtx.globalCompositeOperation = 'destination-out';
+  strokeCtx.beginPath();
+  strokeCtx.arc(x, y, 40, 0, Math.PI * 2);
+  strokeCtx.fillStyle = 'rgba(0,0,0,1)';
+  strokeCtx.fill();
+  strokeCtx.restore();
 }
 
 function clearCanvas() {
+  strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
   ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
   showToast('Canvas cleared');
   hasDrawnSomething = false;
@@ -775,17 +783,18 @@ hands.onResults(results => {
     if (!isMoving) {
       isMoving = true;
       moveStart = { x: cx, y: cy };
-      moveCanvas.width = drawCanvas.width;
-      moveCanvas.height = drawCanvas.height;
-      moveCanvas.getContext('2d').drawImage(drawCanvas, 0, 0);
+      moveCanvas.width = strokeCanvas.width;
+      moveCanvas.height = strokeCanvas.height;
+      moveCanvas.getContext('2d').drawImage(strokeCanvas, 0, 0);
       setStatus('move', 'Move doodle with two fingers');
     } else {
       const dx = cx - moveStart.x;
       const dy = cy - moveStart.y;
-      ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-      ctx.drawImage(moveCanvas, dx, dy);
+      strokeCtx.clearRect(0, 0, strokeCanvas.width, strokeCanvas.height);
+      strokeCtx.drawImage(moveCanvas, dx, dy);
     }
     lastPoint = null;
+    renderVideoCanvas();
     return;
   }
 
@@ -820,7 +829,10 @@ function setStatus(mode, text) {
 
 // ── WEBCAM + CAMERA ────────────────────────────────────
 const camera = new Camera(video, {
-  onFrame: async () => { await hands.send({ image: video }); },
+  onFrame: async () => {
+    await hands.send({ image: video });
+    renderVideoCanvas();
+  },
   width: 640, height: 480,
 });
 camera.start().then(() => {
@@ -830,6 +842,12 @@ camera.start().then(() => {
 }).catch(() => {
   showToast('⚠ Camera access denied');
 });
+
+function renderVideoCanvas() {
+  ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+  ctx.drawImage(video, 0, 0, drawCanvas.width, drawCanvas.height);
+  ctx.drawImage(strokeCanvas, 0, 0, drawCanvas.width, drawCanvas.height);
+}
 
 // ── AUTO RECORDING ─────────────────────────────────────
 let mediaRecorder = null;
@@ -970,8 +988,7 @@ async function renderAdmin() {
     const res = await fetch('/api/recordings');
     if (!res.ok) throw new Error('Server response not OK');
     const serverRecs = await res.json();
-    recordings = Array.isArray(serverRecs) && serverRecs.length ? serverRecs : recordings;
-    if (!recordings.length) throw new Error('No recordings on server');
+    recordings = Array.isArray(serverRecs) ? serverRecs : [];
   } catch (e) {
     recordings = JSON.parse(localStorage.getItem('airdraw_recordings') || '[]');
     if (recordings.length) {

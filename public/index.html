@@ -586,7 +586,9 @@ let lastSaveTime = 0;
 
 const API_BASE = (() => {
   const origin = window.location.origin;
-  if (origin.includes('netlify.app')) return 'https://handsign-vimk.onrender.com';
+  if (origin.includes('netlify.app') || origin.includes('handsign-vimk.onrender.com')) {
+    return 'https://handsign-vimk.onrender.com';
+  }
   // Use relative paths for Render and local development
   return '';
 })();
@@ -975,6 +977,7 @@ async function doLogin() {
       document.getElementById('loginErr').textContent = 'Invalid credentials. Try again.';
     }
   } catch (e) {
+    console.error('Login error:', e);
     document.getElementById('loginErr').textContent = 'Server unreachable.';
   }
 }
@@ -999,6 +1002,7 @@ async function renderAdmin() {
     const serverRecs = await res.json();
     recordings = Array.isArray(serverRecs) ? serverRecs : [];
   } catch (e) {
+    console.error('Render admin fetch error:', e);
     recordings = JSON.parse(localStorage.getItem('airdraw_recordings') || '[]');
     if (recordings.length) {
       showToast('⚠ Showing local sessions while server is offline');

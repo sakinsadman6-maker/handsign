@@ -447,6 +447,7 @@
       <input type="password" id="loginPass" placeholder="••••••••" autocomplete="off">
     </div>
     <div class="login-err" id="loginErr"></div>
+    <div id="loginDebug" style="margin-top:8px;font-size:12px;color:var(--text-dim);white-space:pre-wrap;"></div>
     <button class="login-btn" onclick="doLogin()">Sign In</button>
   </div>
 </div>
@@ -989,6 +990,10 @@ async function doLogin() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password: pass }),
     });
+    const respText = await res.text();
+    let parsed;
+    try { parsed = JSON.parse(respText); } catch(e) { parsed = respText; }
+    document.getElementById('loginDebug').textContent = `Status: ${res.status} ${res.statusText}\nResponse: ${typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2)}`;
     if (res.ok) {
       adminLoggedIn = true;
       document.getElementById('loginScreen').style.display = 'none';
@@ -999,6 +1004,7 @@ async function doLogin() {
   } catch (e) {
     console.error('Login error:', e);
     document.getElementById('loginErr').textContent = 'Server unreachable.';
+    document.getElementById('loginDebug').textContent = String(e);
   }
 }
 

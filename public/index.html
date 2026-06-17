@@ -42,33 +42,36 @@
     flex: 1;
     position: relative;
     overflow: hidden;
+    min-height: 0;
+    background: #050508;
   }
 
   #drawCanvas {
     position: absolute; top: 0; left: 0;
     width: 100%; height: 100%;
     cursor: none;
+    z-index: 2;
+    background: transparent;
   }
 
   #webcamVideo {
     position: absolute;
-    bottom: 16px; right: 16px;
-    width: 200px; height: 150px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
+    inset: 0;
+    width: 100%; height: 100%;
+    border-radius: 0;
+    border: none;
     object-fit: cover;
     transform: scaleX(-1);
-    z-index: 10;
-    opacity: 0.85;
-    box-shadow: 0 0 20px rgba(124,58,237,0.3);
+    z-index: 0;
+    opacity: 1;
   }
 
   #overlayCanvas {
     position: absolute;
-    bottom: 16px; right: 16px;
-    width: 200px; height: 150px;
-    border-radius: 12px;
-    z-index: 11;
+    inset: 0;
+    width: 100%; height: 100%;
+    border-radius: 0;
+    z-index: 3;
     pointer-events: none;
     transform: scaleX(-1);
   }
@@ -84,6 +87,7 @@
     gap: 20px;
     z-index: 20;
     overflow-y: auto;
+    min-height: 0;
   }
 
   .logo {
@@ -361,6 +365,51 @@
   .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
   .empty-state p { font-size: 14px; }
 
+  @media (max-width: 900px) {
+    #app {
+      flex-direction: column;
+    }
+
+    #canvas-area {
+      height: 60vh;
+    }
+
+    #sidebar {
+      width: 100%;
+      border-left: none;
+      border-top: 1px solid var(--border);
+      max-height: 40vh;
+      padding: 16px;
+    }
+
+    .color-grid {
+      grid-template-columns: repeat(5, 1fr);
+    }
+
+    .recordings-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .rec-card {
+      flex-direction: column;
+    }
+
+    .rec-thumb {
+      width: 100%;
+      height: auto;
+    }
+
+    .admin-header,
+    .admin-body {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+
+    .admin-stats {
+      grid-template-columns: 1fr;
+    }
+  }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -523,14 +572,21 @@ const COLORS = [
 let currentColor = '#a855f7';
 let brushSize = 12;
 let glowSize = 20;
-let gestureMode = 'none'; // 'draw','erase','pause','none'
+let gestureMode = 'none'; // 'draw','erase','pause','move','none'
 let lastPoint = null;
 let isDrawing = false;
+let isMoving = false;
+let moveStart = null;
+let moveCanvas = document.createElement('canvas');
 let recordings = JSON.parse(localStorage.getItem('airdraw_recordings') || '[]');
 let autoSaveTimer = null;
 let sessionStartTime = Date.now();
 let hasDrawnSomething = false;
 let lastSaveTime = 0;
+
+function persistLocalRecordings() {
+  localStorage.setItem('airdraw_recordings', JSON.stringify(recordings.slice(0, 50)));
+}
 
 // Canvas
 const drawCanvas = document.getElementById('drawCanvas');
@@ -655,6 +711,7 @@ function getFingerState(landmarks) {
 
   if (!indexUp && !middleUp && !ringUp && !pinkyUp) return 'fist';
   if (upsCount >= 3 && thumbOpen) return 'open';
+  if (indexUp && middleUp && !ringUp && !pinkyUp) return 'two';
   if (indexUp && !middleUp && !ringUp && !pinkyUp) return 'index';
   return 'other';
 }
@@ -710,10 +767,33 @@ hands.onResults(results => {
     setStatus('erase', 'Erasing 🤚');
     eraseAt(cx, cy);
     lastPoint = null;
+    isMoving = false;
+    return;
+  }
+
+  if (state === 'two') {
+    if (!isMoving) {
+      isMoving = true;
+      moveStart = { x: cx, y: cy };
+      moveCanvas.width = drawCanvas.width;
+      moveCanvas.height = drawCanvas.height;
+      moveCanvas.getContext('2d').drawImage(drawCanvas, 0, 0);
+      setStatus('move', 'Move doodle with two fingers');
+    } else {
+      const dx = cx - moveStart.x;
+      const dy = cy - moveStart.y;
+      ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+      ctx.drawImage(moveCanvas, dx, dy);
+    }
+    lastPoint = null;
     return;
   }
 
   if (state === 'index') {
+    if (isMoving) {
+      isMoving = false;
+      moveStart = null;
+    }
     setStatus('draw', `Drawing ☝️`);
     if (lastPoint) {
       drawGlowLine(lastPoint.x, lastPoint.y, cx, cy);
@@ -729,6 +809,7 @@ hands.onResults(results => {
   // Other gestures
   setStatus('ready', 'Hand detected');
   lastPoint = null;
+  isMoving = false;
 });
 
 function setStatus(mode, text) {
@@ -810,6 +891,8 @@ function saveRecording(blob) {
       thumbnail,
       duration: Math.round((Date.now() - sessionStartTime) / 1000),
     };
+    recordings.unshift(rec);
+    persistLocalRecordings();
     try {
       const res = await fetch('/api/recordings', {
         method: 'POST',
@@ -885,10 +968,17 @@ function closeAdmin() {
 async function renderAdmin() {
   try {
     const res = await fetch('/api/recordings');
-    recordings = await res.json();
+    if (!res.ok) throw new Error('Server response not OK');
+    const serverRecs = await res.json();
+    recordings = Array.isArray(serverRecs) && serverRecs.length ? serverRecs : recordings;
+    if (!recordings.length) throw new Error('No recordings on server');
   } catch (e) {
-    recordings = [];
-    showToast('⚠ Could not load recordings from server');
+    recordings = JSON.parse(localStorage.getItem('airdraw_recordings') || '[]');
+    if (recordings.length) {
+      showToast('⚠ Showing local sessions while server is offline');
+    } else {
+      showToast('⚠ Could not load recordings from server');
+    }
   }
 
   document.getElementById('stat-total').textContent = recordings.length;

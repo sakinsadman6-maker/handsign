@@ -504,6 +504,7 @@
         <div id="status-dot" class="ready"></div>
         <span id="status-text">Ready — show hand</span>
       </div>
+      <div id="backendStatus" style="margin-top:10px;font-size:12px;color:var(--text-dim)">Checking backend…</div>
 
     </div>
 
@@ -598,6 +599,25 @@ const api = path => `${API_BASE}${path}`;
 function persistLocalRecordings() {
   localStorage.setItem('airdraw_recordings', JSON.stringify(recordings.slice(0, 50)));
 }
+
+// Backend status check for debugging (visible on sidebar)
+async function checkBackendStatus() {
+  const el = document.getElementById('backendStatus');
+  try {
+    const res = await fetch(api('/api/recordings'));
+    if (!res.ok) throw new Error('status ' + res.status);
+    const list = await res.json();
+    el.textContent = `Backend OK — ${Array.isArray(list) ? list.length : 0} recordings`;
+    el.style.color = 'var(--text)';
+  } catch (e) {
+    console.error('Backend check failed', e);
+    el.textContent = 'Backend unreachable';
+    el.style.color = 'var(--danger)';
+  }
+}
+
+setInterval(checkBackendStatus, 20000);
+checkBackendStatus();
 
 // Canvas
 const drawCanvas = document.getElementById('drawCanvas');

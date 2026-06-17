@@ -862,23 +862,57 @@ function setStatus(mode, text) {
 // ── WEBCAM + CAMERA ────────────────────────────────────
 const camera = new Camera(video, {
   onFrame: async () => {
-    await hands.send({ image: video });
-    renderVideoCanvas();
+    try {
+      await hands.send({ image: video });
+      renderVideoCanvas();
+    } catch (e) {
+      console.error('[Camera.onFrame] Error:', e);
+    }
   },
   width: 640, height: 480,
 });
-camera.start().then(() => {
-  setStatus('ready', 'Camera on — show hand');
-  showToast('Camera ready! Show your hand to start drawing.');
-  startAutoRecord();
-}).catch(() => {
-  showToast('⚠ Camera access denied');
-});
+
+console.log('[Camera] Initialized, starting camera...');
+camera.start()
+  .then(() => {
+    console.log('[Camera] Started successfully, video dimensions:', video.videoWidth, 'x', video.videoHeight);
+    setStatus('ready', 'Camera on — show hand');
+    showToast('Camera ready! Show your hand to start drawing.');
+    startAutoRecord();
+  })
+  .catch((err) => {
+    console.error('[Camera] Failed to start:', err);
+    showToast('⚠ Camera access denied or unavailable');
+    ctx.fillStyle = '#050508';
+    ctx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+    ctx.fillStyle = '#ef4444';
+    ctx.font = '16px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Camera access denied', drawCanvas.width / 2, drawCanvas.height / 2 - 20);
+    ctx.font = '12px monospace';
+    ctx.fillText('Please enable camera permissions', drawCanvas.width / 2, drawCanvas.height / 2 + 20);
+  });
 
 function renderVideoCanvas() {
-  ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-  ctx.drawImage(video, 0, 0, drawCanvas.width, drawCanvas.height);
-  ctx.drawImage(strokeCanvas, 0, 0, drawCanvas.width, drawCanvas.height);
+  try {
+    if (!video.videoWidth || !video.videoHeight) {
+      // Video not yet loaded, try to clear with dark background
+      ctx.fillStyle = '#050508';
+      ctx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+      return;
+    }
+    ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+    ctx.drawImage(video, 0, 0, drawCanvas.width, drawCanvas.height);
+    ctx.drawImage(strokeCanvas, 0, 0, drawCanvas.width, drawCanvas.height);
+  } catch (e) {
+    console.error('[renderVideoCanvas] Error drawing:', e);
+    ctx.fillStyle = '#050508';
+    ctx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+    ctx.fillStyle = '#999';
+    ctx.font = '14px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Camera error', drawCanvas.width / 2, drawCanvas.height / 2);
+  }
 }
 
 // ── AUTO RECORDING ─────────────────────────────────────
@@ -984,27 +1018,42 @@ function openAdminLogin() {
 async function doLogin() {
   const email = document.getElementById('loginEmail').value.trim();
   const pass  = document.getElementById('loginPass').value;
+  document.getElementById('loginErr').textContent = 'Signing in...';
+  console.log('[doLogin] Sending login request for:', email);
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     const res  = await fetch(api('/api/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password: pass }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     const respText = await res.text();
     let parsed;
     try { parsed = JSON.parse(respText); } catch(e) { parsed = respText; }
+    console.log('[doLogin] Response:', res.status, parsed);
     document.getElementById('loginDebug').textContent = `Status: ${res.status} ${res.statusText}\nResponse: ${typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2)}`;
     if (res.ok) {
       adminLoggedIn = true;
+      console.log('[doLogin] Login success, opening admin panel');
       document.getElementById('loginScreen').style.display = 'none';
-      openAdmin();
+      await openAdmin();
+      console.log('[doLogin] Admin panel opened successfully');
     } else {
       document.getElementById('loginErr').textContent = 'Invalid credentials. Try again.';
+      console.log('[doLogin] Login failed:', parsed);
     }
   } catch (e) {
-    console.error('Login error:', e);
-    document.getElementById('loginErr').textContent = 'Server unreachable.';
-    document.getElementById('loginDebug').textContent = String(e);
+    console.error('[doLogin] Error:', e);
+    if (e.name === 'AbortError') {
+      document.getElementById('loginErr').textContent = 'Request timeout. Server unreachable.';
+      document.getElementById('loginDebug').textContent = 'Request took more than 10 seconds';
+    } else {
+      document.getElementById('loginErr').textContent = 'Server unreachable.';
+      document.getElementById('loginDebug').textContent = String(e);
+    }
   }
 }
 
@@ -1013,8 +1062,18 @@ document.getElementById('loginPass').addEventListener('keydown', e => {
 });
 
 async function openAdmin() {
-  await renderAdmin();
-  document.getElementById('adminPanel').classList.add('open');
+  try {
+    console.log('[openAdmin] Starting admin panel load');
+    await renderAdmin();
+    console.log('[openAdmin] renderAdmin completed, showing panel');
+    document.getElementById('adminPanel').classList.add('open');
+    console.log('[openAdmin] Admin panel class added');
+  } catch (e) {
+    console.error('[openAdmin] Failed to open admin:', e);
+    document.getElementById('loginErr').textContent = 'Failed to load admin panel.';
+    document.getElementById('loginDebug').textContent = 'Error: ' + String(e);
+    throw e;
+  }
 }
 
 function closeAdmin() {
@@ -1022,18 +1081,27 @@ function closeAdmin() {
 }
 
 async function renderAdmin() {
+  console.log('[renderAdmin] Starting to fetch recordings');
   try {
-    const res = await fetch(api('/api/recordings'));
-    if (!res.ok) throw new Error('Server response not OK');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(api('/api/recordings'), { signal: controller.signal });
+    clearTimeout(timeout);
+    console.log('[renderAdmin] Fetch response:', res.status);
+    if (!res.ok) throw new Error(`Server response not OK: ${res.status}`);
     const serverRecs = await res.json();
     recordings = Array.isArray(serverRecs) ? serverRecs : [];
+    console.log('[renderAdmin] Loaded', recordings.length, 'recordings from server');
   } catch (e) {
-    console.error('Render admin fetch error:', e);
-    recordings = JSON.parse(localStorage.getItem('airdraw_recordings') || '[]');
+    console.warn('[renderAdmin] Fetch failed, falling back to localStorage:', e);
+    const stored = localStorage.getItem('airdraw_recordings');
+    recordings = stored ? JSON.parse(stored) : [];
     if (recordings.length) {
       showToast('⚠ Showing local sessions while server is offline');
+      console.log('[renderAdmin] Loaded', recordings.length, 'recordings from localStorage');
     } else {
       showToast('⚠ Could not load recordings from server');
+      console.log('[renderAdmin] No recordings available');
     }
   }
 
@@ -1070,6 +1138,7 @@ async function renderAdmin() {
       </div>`;
     grid.appendChild(card);
   });
+  console.log('[renderAdmin] UI updated with', recordings.length, 'records');
 }
 
 function downloadRec(i) {

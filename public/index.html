@@ -630,8 +630,12 @@ const octx = overlayCanvas.getContext('2d');
 const video = document.getElementById('webcamVideo');
 video.style.display = 'none';
 
+console.log('[Init] drawCanvas element:', drawCanvas);
+console.log('[Init] drawCanvas.width:', drawCanvas.width, 'drawCanvas.height:', drawCanvas.height);
+
 function resizeCanvas() {
   const area = document.getElementById('canvas-area');
+  console.log('[resizeCanvas] canvas-area size:', area.clientWidth, 'x', area.clientHeight);
   drawCanvas.width = area.clientWidth;
   drawCanvas.height = area.clientHeight;
   strokeCanvas.width = area.clientWidth;
@@ -640,6 +644,7 @@ function resizeCanvas() {
   moveCanvas.height = area.clientHeight;
   overlayCanvas.width = 200;
   overlayCanvas.height = 150;
+  console.log('[resizeCanvas] canvas resized to:', drawCanvas.width, 'x', drawCanvas.height);
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -863,8 +868,9 @@ function setStatus(mode, text) {
 const camera = new Camera(video, {
   onFrame: async () => {
     try {
+      console.log('[Camera.onFrame] Frame received');
       await hands.send({ image: video });
-      renderVideoCanvas();
+      // Don't call renderVideoCanvas here - let the RAF loop handle it
     } catch (e) {
       console.error('[Camera.onFrame] Error:', e);
     }
@@ -872,16 +878,37 @@ const camera = new Camera(video, {
   width: 640, height: 480,
 });
 
+// Continuous render loop to display video frames (independent of MediaPipe callback)
+let lastFrameTime = 0;
+function continuousRender() {
+  const now = performance.now();
+  // Throttle to ~30fps
+  if (now - lastFrameTime > 33) {
+    renderVideoCanvas();
+    lastFrameTime = now;
+  }
+  requestAnimationFrame(continuousRender);
+}
+console.log('[Camera] Starting continuous render loop');
+continuousRender();
+
 console.log('[Camera] Initialized, starting camera...');
+console.log('[Camera] video element:', video);
+console.log('[Camera] Camera object:', camera);
+
 camera.start()
   .then(() => {
-    console.log('[Camera] Started successfully, video dimensions:', video.videoWidth, 'x', video.videoHeight);
+    console.log('[Camera] Started successfully!');
+    console.log('[Camera] video.readyState:', video.readyState);
+    console.log('[Camera] video.videoWidth:', video.videoWidth, 'video.videoHeight:', video.videoHeight);
+    console.log('[Camera] video.srcObject:', video.srcObject);
     setStatus('ready', 'Camera on — show hand');
     showToast('Camera ready! Show your hand to start drawing.');
     startAutoRecord();
   })
   .catch((err) => {
     console.error('[Camera] Failed to start:', err);
+    console.error('[Camera] Error details:', err.message, err.stack);
     showToast('⚠ Camera access denied or unavailable');
     ctx.fillStyle = '#050508';
     ctx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
@@ -895,20 +922,36 @@ camera.start()
 
 function renderVideoCanvas() {
   try {
-    if (!video.videoWidth || !video.videoHeight) {
-      // Video not yet loaded, try to clear with dark background
+    console.log('[renderVideoCanvas] video state - readyState:', video.readyState, 'videoWidth:', video.videoWidth, 'videoHeight:', video.videoHeight);
+    if (video.readyState < 2) {
+      // Video not ready yet (HAVE_CURRENT_DATA = 2)
       ctx.fillStyle = '#050508';
       ctx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+      ctx.fillStyle = '#666';
+      ctx.font = '14px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('Waiting for camera...', drawCanvas.width / 2, drawCanvas.height / 2);
+      return;
+    }
+    if (!video.videoWidth || !video.videoHeight) {
+      // Video dimensions not set
+      ctx.fillStyle = '#050508';
+      ctx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+      ctx.fillStyle = '#666';
+      ctx.font = '14px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('Camera loading...', drawCanvas.width / 2, drawCanvas.height / 2);
       return;
     }
     ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+    console.log('[renderVideoCanvas] Drawing video frame:', video.videoWidth, 'x', video.videoHeight, 'to canvas:', drawCanvas.width, 'x', drawCanvas.height);
     ctx.drawImage(video, 0, 0, drawCanvas.width, drawCanvas.height);
     ctx.drawImage(strokeCanvas, 0, 0, drawCanvas.width, drawCanvas.height);
   } catch (e) {
     console.error('[renderVideoCanvas] Error drawing:', e);
     ctx.fillStyle = '#050508';
     ctx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
-    ctx.fillStyle = '#999';
+    ctx.fillStyle = '#ef4444';
     ctx.font = '14px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('Camera error', drawCanvas.width / 2, drawCanvas.height / 2);
